@@ -1,0 +1,139 @@
+version: "3"
+
+services:
+  # Samba container to share downloaded files on your local network
+  # https://github.com/dperson/samba
+  samba:
+    build: ./samba
+    environment:
+      TZ: 'EST5EDT'
+    networks:
+      - default
+    ports:
+      - "137:137/udp"
+      - "138:138/udp"
+      - "139:139/tcp"
+      - "445:445/tcp"
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./qbittorrent-downloads:/mnt:z
+    command: '-s "Mount;/mnt" -p'
+
+  # Basic package install of the qbittorrent service
+  # https://github.com/qbittorrent/qBittorrent
+  qbittorrent:
+    image: ghcr.io/linuxserver/qbittorrent
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+      - UMASK_SET=022
+      - WEBUI_PORT=8888
+    volumes:
+      - ./qbittorrent/config:/config
+      - ./qbittorrent-downloads:/downloads
+    ports:
+      - 6881:6881
+      - 6881:6881/udp
+      - 8888:8888
+    restart: unless-stopped
+
+  # Prometheus metrics collector for pihole:
+  # https://github.com/povilasv/pihole_exporter
+  pihole-exporter:
+    container_name: pihole-exporter
+    build: ./pihole_exporter
+    environment:
+      PIHOLE_HOSTNAME: pihole
+      PORT: 9617
+      INTERVAL: 30s
+      PIHOLE_PASSWORD: ${WEBPASSWORD}
+    ports:
+      - 9617:9617
+    depends_on:
+      - pihole
+    restart: unless-stopped
+
+  # Pihole docker container
+  # https://github.com/pi-hole/docker-pi-hole/
+  pihole:
+    container_name: pihole
+    image: pihole/pihole:latest
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "67:67/udp"
+      - "80:80/tcp"
+      - "443:443/tcp"
+    environment:
+      TZ: 'Europe/Paris'
+      # WEBPASSWORD: 'set a secure password here or it will be random'
+      WEBPASSWORD: ${WEBPASSWORD} 
+      PIHOLE_DNS_: 1.1.1.1;8.8.8.8;8.8.4.4
+    # Volumes store your data between container upgrades
+    volumes:
+      - ./etc-pihole/:/etc/pihole/
+      - ./etc-dnsmasq.d/:/etc/dnsmasq.d/
+    # Recommended but not required (DHCP needs NET_ADMIN)
+    #   https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  # Prometheus metrics collector for containers, built for arm architectures
+  # https://github.com/Budry/cadvisor-arm
+  cadvisor:
+    image: budry/cadvisor-arm
+    container_name: cadvisor
+    ports:
+      - 8080:8080
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    depends_on:
+      - pihole
+    restart: unless-stopped
+
+  # Prometheus, on armv7 architecture (raspberry Pi 3)
+  # https://github.com/ajeetraina/prometheus-armv7
+  prometheus:
+    image: ajeetraina/prometheus-armv7
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '-config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - 9090:9090
+    depends_on:
+      - cadvisor
+    restart: unless-stopped
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+  # Grafana official docker image
+  # https://github.com/grafana/grafana
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${WEBPASSWORD}
+      - GF_DASHBOARDS_JSON_ENABLED=true
+      - DS_LOCAL=local
+    volumes:
+      - ./grafana/datasources/local-prometheus.yml:/etc/grafana/provisioning/datasources/local-prometheus.yml
+      - ./grafana/dashboards/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/dashboard-provider.yml
+      - ./grafana/dashboards/docker-node_exporter-raspberry.json:/etc/grafana/provisioning/dashboards/docker-node_exporter-raspberry.json
+      - ./grafana/dashboards/pihole.json:/etc/grafana/provisioning/dashboards/pihole.json
+      - ./grafana/plugins/piechart-panel:/var/lib/grafana/plugins/grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+

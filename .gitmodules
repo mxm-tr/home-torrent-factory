@@ -1,0 +1,10 @@
+[submodule "pihole_exporter"]
+	path = pihole_exporter
+	url = https://github.com/povilasv/pihole_exporter
+[submodule "grafana/plugins/piechart-panel"]
+	path = grafana/plugins/piechart-panel
+	url = https://github.com/grafana/piechart-panel.git
+	branch = release-1.6.1
+[submodule "samba"]
+	path = samba
+	url = https://github.com/dperson/samba
